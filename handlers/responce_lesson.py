@@ -1,60 +1,68 @@
+import os
+import json
+import sys
+from datetime import date
+
 from telegram import Update
 from telegram.ext import CallbackContext
-from database import LocalSession
-from database.models import Courses, Directions, Lesson
-import re
+import django
 
-def clean_text(text: str) -> str:
-    """Matndagi ortiqcha bo'sh joylarni olib tashlash"""
-    if not text:
-        return ""
-    return re.sub(r'\s+', ' ', text).strip()
+# Django sozlamalari
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+django.setup()
 
-def send_schedule_callback(update: Update, context: CallbackContext):
+from app.models import Course, Lesson, Group
+
+def send_lesson(update: Update, context: CallbackContext):
+    # 1️⃣ Hozirgi hafta turi aniqlash
+    start_date = date(2025, 9, 3)  # 3-sentyabr boshlanishi
+    today = date.today()
+    delta_days = (today - start_date).days
+    week_number = delta_days // 7 + 1
+    week_type = "even" if week_number % 2 == 0 else "odd"
+
     query = update.callback_query
-    try:
-        # callback_data: "uz:KI25-01:Dushanba"
-        lang, course_name, day = query.data.split(":")
-    except ValueError:
-        query.answer()
-        query.message.reply_text("❌ Xato callback_data!")
-        return
-
-    db = LocalSession()
-
-    # 1️⃣ Course nomidan id olish
-    course_obj = db.query(Courses).filter(Courses.name == course_name).first()
-    if not course_obj:
-        query.message.reply_text(f"❌ {course_name} kursi topilmadi.")
-        db.close()
-        query.answer()
-        return
-
-    # 2️⃣ Shu course_id bilan Direction id olish
-    direction_obj = db.query(Directions).filter(Directions.course_id == course_obj.id).first()
-    if not direction_obj:
-        query.message.reply_text(f"❌ {course_name} kursiga tegishli yo‘nalish topilmadi.")
-        db.close()
-        query.answer()
-        return
-
-    # 3️⃣ Lesson jadvalidan faqat shu kun va direction_id bo‘yicha olish
-    lessons = db.query(Lesson).filter(
-        Lesson.direction_id == direction_obj.id,
-        Lesson.day == day
-    ).order_by(Lesson.time).all()
-    db.close()
-
-    if not lessons:
-        text = f"❌ {day} kuni uchun darslar topilmadi."
-    else:
-        text = f"📅 *{day} kuni dars jadvali* ({course_name}):\n\n"
-        for idx, lesson in enumerate(lessons, start=1):
-            time = clean_text(lesson.time)
-            title = clean_text(lesson.title)
-            teacher = clean_text(lesson.teacher)
-            aud = clean_text(lesson.aud)
-            text += f"⏰ {time} | 📚 {title} | 👨‍🏫 {teacher} | 🏫 {aud}\n"
-
-    query.message.reply_text(text, parse_mode="Markdown")
     query.answer()
+
+    # callback_data format: "uz:1:1:Dushanba"
+    lang, course_id, direction, day = query.data.split(':')
+
+    # Course obyektini olish
+    course_data = f"{course_id}_{lang}"
+    try:
+        course_obj = Course.objects.get(name=course_data)
+    except Course.DoesNotExist:
+        query.message.reply_text('Kurs topilmadi ❌')
+        return
+
+    # JSON fayldan title olish
+    try:
+        with open("database/lessons.json", 'r', encoding='utf-8') as file:
+            lessons_json = json.load(file)
+            title = lessons_json[lang][course_id][direction]['title']
+    except (KeyError, FileNotFoundError):
+        query.message.reply_text('Lesson ma\'lumotlari topilmadi ❌')
+        return
+
+    # Group obyektini olish
+    group_data = Group.objects.filter(name=title, course=course_obj).first()
+    if not group_data:
+        query.message.reply_text('Guruh topilmadi ❌')
+        return
+
+    # Lesson obyektini olish
+    lessons = Lesson.objects.filter(group=group_data,weekday = day.lower()[:2], week_type__in=[week_type, "all"]).all()
+    if lessons:
+        for lesson in lessons:
+
+            text = (
+                    f"📘 *Fan:* {lesson.name}\n"
+                    f"👨‍🏫 *O‘qituvchi:* {lesson.teacher}\n"
+                    f"🏫 *Xona:* {lesson.room}\n"
+                    f"⏰ *Para:* {lesson.time_pair}"
+                    )
+            query.message.reply_text(text, parse_mode="Markdown")
+  # kerak bo'lsa lessonning text atributini yozish mumkin
+    else:
+        query.message.reply_text('Dars topilmadi ❌')
