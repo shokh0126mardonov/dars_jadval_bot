@@ -3,45 +3,61 @@ import json
 from django.http import JsonResponse,HttpRequest
 from django.views import View
 
-from .models import Group,Course
+from .models import Group,Course,Lesson
 
 class GroupCreate(View):
-    def post(self,request:HttpRequest)->JsonResponse:
-  
-        for data in json.loads(request.body.decode()):
+    def post(self, request: HttpRequest) -> JsonResponse:
+        try:
+            data_list = json.loads(request.body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            return JsonResponse({'error': f'Invalid JSON: {str(e)}'}, status=400)
+
+        created_groups = []
+        skipped_groups = []
+
+        for data in data_list:
             name = data.get('name')
-            course = data.get('course')
+            course_name = data.get('course')  # requestdan keladi
 
-            existing_course = Course.objects.get(name = course)
-            if  existing_course is None:
-                return JsonResponse({'course':'error'},status = 400)
-            
-            if name is None:
-                return JsonResponse({'name':'Required'})
-            
-            new_group = Group(name = name,course = existing_course)
-            new_group.save()
-            
+            if not name:
+                return JsonResponse({'name': 'Required'}, status=400)
 
-            return JsonResponse({'name':new_group.name})
-        
+            # course bo'lmasa default
+            if not course_name:
+                course = Course.objects.first()
+                if not course:
+                    course = Course.objects.create(name="1")
+            else:
+                course, _ = Course.objects.get_or_create(name=course_name)
 
-from django.views import View
-from django.http import JsonResponse, HttpRequest
-from .models import Lesson, Group
-import json
+            # Dublikat tekshirish
+            group, created = Group.objects.get_or_create(
+                name=name,
+                course=course
+            )
 
+            if created:
+                created_groups.append({'name': group.name, 'course': course.get_name_display()})
+            else:
+                skipped_groups.append({'name': group.name, 'course': course.get_name_display()})
+
+        return JsonResponse({
+            'created_groups': created_groups,
+            'skipped_groups': skipped_groups
+        })
+
+    
 class LessonCreate(View):
     def post(self, request: HttpRequest) -> JsonResponse:
         try:
-            lessons_data = json.loads(request.body.decode())
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+            lessons_data = json.loads(request.body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            return JsonResponse({'error': f'Invalid JSON: {str(e)}'}, status=400)
 
         created_lessons = []
+        skipped_lessons = []
 
         for data in lessons_data:
-            # JSON-dan ma'lumotlarni olish
             name = data.get('name')
             room = data.get('room')
             teacher = data.get('teacher')
@@ -49,19 +65,24 @@ class LessonCreate(View):
             weekday = data.get('weekday')
             week_type = data.get('week_type', 'all')
             group_name = data.get('group')
+            course_name = data.get('course')
 
-            # Majburiy maydonlarni tekshirish
             if not all([name, room, teacher, time_pair, weekday, group_name]):
                 return JsonResponse({'error': 'Missing required field'}, status=400)
 
-            # Group obyektini olish
-            try:
-                group = Group.objects.get(name=group_name)
-            except Group.DoesNotExist:
-                return JsonResponse({'error': f'Group {group_name} not found'}, status=400)
+            # course tayyorlash
+            if not course_name:
+                course = Course.objects.first()
+                if not course:
+                    course = Course.objects.create(name="1")
+            else:
+                course, _ = Course.objects.get_or_create(name=course_name)
 
-            # Lesson yaratish
-            lesson = Lesson.objects.create(
+            # group tayyorlash
+            group, _ = Group.objects.get_or_create(name=group_name, defaults={'course': course})
+
+            # Dublikat lesson tekshirish
+            lesson, created = Lesson.objects.get_or_create(
                 name=name,
                 room=room,
                 teacher=teacher,
@@ -71,6 +92,28 @@ class LessonCreate(View):
                 group=group
             )
 
-            created_lessons.append(lesson.name)
+            if created:
+                created_lessons.append({
+                    'name': name,
+                    'group': group_name,
+                    'room': room,
+                    'teacher': teacher,
+                    'time_pair': time_pair,
+                    'weekday': weekday,
+                    'week_type': week_type
+                })
+            else:
+                skipped_lessons.append({
+                    'name': name,
+                    'group': group_name,
+                    'room': room,
+                    'teacher': teacher,
+                    'time_pair': time_pair,
+                    'weekday': weekday,
+                    'week_type': week_type
+                })
 
-        return JsonResponse({'created_lessons': created_lessons})
+        return JsonResponse({
+            'created_lessons': created_lessons,
+            'skipped_lessons': skipped_lessons
+        })

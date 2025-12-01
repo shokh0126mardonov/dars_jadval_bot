@@ -3,14 +3,10 @@ from django.db import models
 
 class Course(models.Model):
     COURSE_CHOICES = [
-        ("1_uz", "1-kurs"),
-        ("1_ru", "1 курс"),
-        ("2_uz", "2-kurs"),
-        ("2_ru", "2 курс"),
-        ("3_uz", "3-kurs"),
-        ("3_ru", "3 курс"),
-        ("4_uz", "4-kurs"),
-        ("4_ru", "4 курс"),
+        ("1", "1-kurs"),
+        ("2", "2-kurs"),
+        ("3", "3-kurs"),
+        ("4", "4-kurs"),
     ]
 
     name = models.CharField(max_length=50, choices=COURSE_CHOICES, unique=True)
